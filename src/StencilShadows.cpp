@@ -191,17 +191,32 @@ namespace {
                                            float frontX, float frontY, float sideX, float sideY) {
         if (!g_originalStorePedShadow || !ped) return;
 
-        // CWorld::Players[0].m_pPed is at 0xB7CD98 in GTA SA 1.0 US.
-        // Only compare the pointer when the player-info slot is readable.
-        constexpr uintptr_t kPlayerInfoAddress = 0x00B7CD98;
+        // CWorld::PlayerInFocus is at 0xB7CD74; CWorld::Players starts at
+        // 0xB7CD98 and CPlayerInfo entries are 0x190 bytes in GTA SA 1.0 US.
+        constexpr uintptr_t kPlayerInFocusAddress = 0x00B7CD74;
+        constexpr uintptr_t kPlayersAddress = 0x00B7CD98;
+        constexpr uintptr_t kPlayerInfoStride = 0x190;
         bool isPlayer = false;
-        MEMORY_BASIC_INFORMATION info{};
-        if (VirtualQuery(reinterpret_cast<const void*>(kPlayerInfoAddress), &info, sizeof(info)) == sizeof(info) &&
-            info.State == MEM_COMMIT && info.Type == MEM_IMAGE &&
-            info.AllocationBase == reinterpret_cast<void*>(GetModuleHandleW(nullptr)) &&
-            (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0) {
-            void* playerPed = *reinterpret_cast<void* volatile const*>(kPlayerInfoAddress);
-            isPlayer = (playerPed == ped);
+        MEMORY_BASIC_INFORMATION focusInfo{};
+        if (VirtualQuery(reinterpret_cast<const void*>(kPlayerInFocusAddress),
+                         &focusInfo, sizeof(focusInfo)) == sizeof(focusInfo) &&
+            focusInfo.State == MEM_COMMIT && focusInfo.Type == MEM_IMAGE &&
+            focusInfo.AllocationBase == reinterpret_cast<void*>(GetModuleHandleW(nullptr)) &&
+            (focusInfo.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0) {
+            const signed char focus = *reinterpret_cast<volatile const signed char*>(kPlayerInFocusAddress);
+            if (focus >= 0 && focus < 2) {
+                const uintptr_t playerPedAddress =
+                    kPlayersAddress + static_cast<uintptr_t>(focus) * kPlayerInfoStride;
+                MEMORY_BASIC_INFORMATION playerInfo{};
+                if (VirtualQuery(reinterpret_cast<const void*>(playerPedAddress),
+                                 &playerInfo, sizeof(playerInfo)) == sizeof(playerInfo) &&
+                    playerInfo.State == MEM_COMMIT && playerInfo.Type == MEM_IMAGE &&
+                    playerInfo.AllocationBase == reinterpret_cast<void*>(GetModuleHandleW(nullptr)) &&
+                    (playerInfo.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0) {
+                    void* playerPed = *reinterpret_cast<void* volatile const*>(playerPedAddress);
+                    isPlayer = (playerPed == ped);
+                }
+            }
         }
 
         if ((isPlayer && !g_enablePlayerShadows) || (!isPlayer && !g_enablePedestrianShadows))
@@ -311,7 +326,8 @@ namespace {
         constexpr uintptr_t kStorePoleShadowAddress = 0x0070C750;
         constexpr uintptr_t kClockMinuteAddress = 0x00B70152;
         constexpr uintptr_t kClockHourAddress = 0x00B70153;
-        constexpr uintptr_t kPlayerInfoAddress = 0x00B7CD98;
+        constexpr uintptr_t kPlayerInFocusAddress = 0x00B7CD74;
+        constexpr uintptr_t kPlayersAddress = 0x00B7CD98;
         const HMODULE mainModule = GetModuleHandleW(nullptr);
         if (reinterpret_cast<uintptr_t>(mainModule) != 0x00400000) return false;
         return IsAddressInMainExecutable(kStoreShadowAddress, true) &&
@@ -319,7 +335,8 @@ namespace {
                IsAddressInMainExecutable(kStorePoleShadowAddress, true) &&
                IsAddressInMainExecutable(kClockMinuteAddress, false) &&
                IsAddressInMainExecutable(kClockHourAddress, false) &&
-               IsAddressInMainExecutable(kPlayerInfoAddress, false);
+               IsAddressInMainExecutable(kPlayerInFocusAddress, false) &&
+               IsAddressInMainExecutable(kPlayersAddress, false);
     }
 
     bool ReadGtaClock(unsigned char& hour, unsigned char& minute) {
