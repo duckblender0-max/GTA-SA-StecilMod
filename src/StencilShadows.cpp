@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <MinHook.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -15,7 +16,10 @@
 namespace {
     HMODULE g_module = nullptr;
     volatile LONG g_running = 1;
-    volatile LONG g_strengthBits = 0;
+    volatile LONG g_strengthBits = 0x3F800000;
+    bool g_shadowHookInstalled = false;
+    using StoreShadowFn = void(__cdecl*)(unsigned char, void*, const void*, float, float, float, float, short, unsigned char, unsigned char, unsigned char, float, bool, float, void*, bool);
+    StoreShadowFn g_originalStoreShadow = nullptr;
 
     struct ShadowConfig {
         bool enabled = true;
@@ -140,6 +144,70 @@ namespace {
         }
     }
 
+    float CurrentTimeStrength() {
+        LONG bits = InterlockedCompareExchange(&g_strengthBits, 0, 0);
+        float value = 1.0f;
+        std::memcpy(&value, &bits, sizeof(value));
+        return std::clamp(value, 0.0f, 1.0f);
+    }
+
+    void __cdecl HookStoreShadowToBeRendered(
+        unsigned char type, void* texture, const void* posn,
+        float topX, float topY, float rightX, float rightY,
+        short intensity, unsigned char red, unsigned char green,
+        unsigned char blue, float zDistance, bool drawOnWater,
+        float scale, void* realTimeShadow, bool drawOnBuildings) {
+        if (g_originalStoreShadow) {
+            short adjustedIntensity = intensity;
+            if (intensity > 0) {
+                const long scaled = std::lround(static_cast<double>(intensity) *
+                                                static_cast<double>(CurrentTimeStrength()));
+                adjustedIntensity = static_cast<short>(std::clamp(scaled, 0L, 32767L));
+            }
+            g_originalStoreShadow(type, texture, posn, topX, topY, rightX, rightY,
+                                  adjustedIntensity, red, green, blue, zDistance,
+                                  drawOnWater, scale, realTimeShadow, drawOnBuildings);
+        }
+    }
+
+    bool InstallShadowIntensityHook() {
+        constexpr uintptr_t kStoreShadowAddress = 0x00707390; // CShadows::StoreShadowToBeRendered, SA 1.0 US
+        const MH_STATUS initStatus = MH_Initialize();
+        if (initStatus != MH_OK && initStatus != MH_ERROR_ALREADY_INITIALIZED) {
+            std::wstringstream line;
+            line << L"MinHook initialization failed: " << static_cast<int>(initStatus);
+            AppendLog(line.str());
+            return false;
+        }
+
+        const MH_STATUS createStatus = MH_CreateHook(
+            reinterpret_cast<void*>(kStoreShadowAddress),
+            reinterpret_cast<void*>(&HookStoreShadowToBeRendered),
+            reinterpret_cast<void**>(&g_originalStoreShadow));
+        if (createStatus != MH_OK) {
+            std::wstringstream line;
+            line << L"Shadow intensity hook creation failed: " << static_cast<int>(createStatus);
+            AppendLog(line.str());
+            MH_Uninitialize();
+            return false;
+        }
+
+        const MH_STATUS enableStatus = MH_EnableHook(reinterpret_cast<void*>(kStoreShadowAddress));
+        if (enableStatus != MH_OK) {
+            std::wstringstream line;
+            line << L"Shadow intensity hook enable failed: " << static_cast<int>(enableStatus);
+            AppendLog(line.str());
+            MH_RemoveHook(reinterpret_cast<void*>(kStoreShadowAddress));
+            MH_Uninitialize();
+            g_originalStoreShadow = nullptr;
+            return false;
+        }
+
+        g_shadowHookInstalled = true;
+        AppendLog(L"Installed hook: GTA native CShadows::StoreShadowToBeRendered (0x00707390).");
+        return true;
+    }
+
     bool ReadGtaClock(unsigned char& hour, unsigned char& minute) {
         // Plugin-SDK CClock addresses for GTA San Andreas 1.0 US:
         // ms_nGameClockMinutes = 0xB70152, ms_nGameClockHours = 0xB70153.
@@ -183,10 +251,15 @@ namespace {
 
         int lastLoggedMinute = -1;
         bool clockWarningLogged = false;
+        bool hookAttempted = false;
         while (InterlockedCompareExchange(&g_running, 1, 1) != 0) {
             unsigned char hour = 0, minute = 0;
             if (ReadGtaClock(hour, minute)) {
                 clockWarningLogged = false;
+                if (!hookAttempted) {
+                    hookAttempted = true;
+                    InstallShadowIntensityHook();
+                }
                 const float fractionalHour = static_cast<float>(hour) +
                                              static_cast<float>(minute) / 60.0f;
                 const float strength = CalculateTimeStrength(cfg, fractionalHour);
@@ -211,6 +284,12 @@ namespace {
                 clockWarningLogged = true;
             }
             Sleep(static_cast<DWORD>(cfg.updateIntervalMs));
+        }
+        if (g_shadowHookInstalled) {
+            MH_DisableHook(reinterpret_cast<void*>(0x00707390));
+            MH_Uninitialize();
+            g_shadowHookInstalled = false;
+            g_originalStoreShadow = nullptr;
         }
         return 0;
     }
