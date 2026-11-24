@@ -19,8 +19,17 @@ namespace {
     volatile LONG g_running = 1;
     volatile LONG g_strengthBits = 0x3F800000;
     bool g_shadowHookInstalled = false;
+    bool g_pedHookInstalled = false;
+    bool g_poleHookInstalled = false;
+    bool g_enablePlayerShadows = true;
+    bool g_enablePedestrianShadows = true;
+    bool g_enablePoleShadows = true;
     using StoreShadowFn = void(__cdecl*)(unsigned char, void*, const void*, float, float, float, float, short, unsigned char, unsigned char, unsigned char, float, bool, float, void*, bool);
+    using StorePedShadowFn = void(__cdecl*)(void*, float, float, float, float, float, float);
+    using StorePoleShadowFn = void(__cdecl*)(void*, float, float, float, float, float, unsigned int);
     StoreShadowFn g_originalStoreShadow = nullptr;
+    StorePedShadowFn g_originalStorePedShadow = nullptr;
+    StorePoleShadowFn g_originalStorePoleShadow = nullptr;
 
     struct ShadowConfig {
         bool enabled = true;
@@ -171,6 +180,58 @@ namespace {
         }
     }
 
+    void __cdecl HookStorePedObjectShadow(void* ped, float displacementX, float displacementY,
+                                           float frontX, float frontY, float sideX, float sideY) {
+        if (!g_originalStorePedShadow || !ped) return;
+
+        // CWorld::Players[0].m_pPed is at 0xB7CD98 in GTA SA 1.0 US.
+        // Only compare the pointer when the player-info slot is readable.
+        constexpr uintptr_t kPlayerInfoAddress = 0x00B7CD98;
+        bool isPlayer = false;
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<const void*>(kPlayerInfoAddress), &info, sizeof(info)) == sizeof(info) &&
+            info.State == MEM_COMMIT && info.Type == MEM_IMAGE &&
+            info.AllocationBase == reinterpret_cast<void*>(GetModuleHandleW(nullptr)) &&
+            (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0) {
+            void* playerPed = *reinterpret_cast<void* volatile const*>(kPlayerInfoAddress);
+            isPlayer = (playerPed == ped);
+        }
+
+        if ((isPlayer && !g_enablePlayerShadows) || (!isPlayer && !g_enablePedestrianShadows))
+            return;
+
+        g_originalStorePedShadow(ped, displacementX, displacementY, frontX, frontY, sideX, sideY);
+    }
+
+    void __cdecl HookStorePoleShadow(void* entity, float offsetX, float offsetY, float offsetZ,
+                                     float poleHeight, float poleWidth, unsigned int localId) {
+        if (!g_originalStorePoleShadow || !g_enablePoleShadows) return;
+        g_originalStorePoleShadow(entity, offsetX, offsetY, offsetZ, poleHeight, poleWidth, localId);
+    }
+
+    bool CreateAndEnableHook(void* target, void* detour, void** original, const wchar_t* label) {
+        MH_STATUS status = MH_CreateHook(target, detour, original);
+        if (status != MH_OK) {
+            std::wstringstream line;
+            line << label << L" hook creation failed: " << static_cast<int>(status);
+            AppendLog(line.str());
+            return false;
+        }
+        status = MH_EnableHook(target);
+        if (status != MH_OK) {
+            std::wstringstream line;
+            line << label << L" hook enable failed: " << static_cast<int>(status);
+            AppendLog(line.str());
+            MH_RemoveHook(target);
+            *original = nullptr;
+            return false;
+        }
+        std::wstringstream line;
+        line << L"Installed hook: " << label;
+        AppendLog(line.str());
+        return true;
+    }
+
     bool InstallShadowIntensityHook() {
         constexpr uintptr_t kStoreShadowAddress = 0x00707390; // CShadows::StoreShadowToBeRendered, SA 1.0 US
         const MH_STATUS initStatus = MH_Initialize();
@@ -206,6 +267,17 @@ namespace {
 
         g_shadowHookInstalled = true;
         AppendLog(L"Installed hook: GTA native CShadows::StoreShadowToBeRendered (0x00707390).");
+
+        g_pedHookInstalled = CreateAndEnableHook(
+            reinterpret_cast<void*>(0x00707B40),
+            reinterpret_cast<void*>(&HookStorePedObjectShadow),
+            reinterpret_cast<void**>(&g_originalStorePedShadow),
+            L"CShadows::StoreShadowForPedObject (0x00707B40)");
+        g_poleHookInstalled = CreateAndEnableHook(
+            reinterpret_cast<void*>(0x0070C750),
+            reinterpret_cast<void*>(&HookStorePoleShadow),
+            reinterpret_cast<void**>(&g_originalStorePoleShadow),
+            L"CShadows::StoreShadowForPole (0x0070C750)");
         return true;
     }
 
@@ -228,13 +300,19 @@ namespace {
 
     bool IsSupportedExecutableLayout() {
         constexpr uintptr_t kStoreShadowAddress = 0x00707390;
+        constexpr uintptr_t kStorePedShadowAddress = 0x00707B40;
+        constexpr uintptr_t kStorePoleShadowAddress = 0x0070C750;
         constexpr uintptr_t kClockMinuteAddress = 0x00B70152;
         constexpr uintptr_t kClockHourAddress = 0x00B70153;
+        constexpr uintptr_t kPlayerInfoAddress = 0x00B7CD98;
         const HMODULE mainModule = GetModuleHandleW(nullptr);
         if (reinterpret_cast<uintptr_t>(mainModule) != 0x00400000) return false;
         return IsAddressInMainExecutable(kStoreShadowAddress, true) &&
+               IsAddressInMainExecutable(kStorePedShadowAddress, true) &&
+               IsAddressInMainExecutable(kStorePoleShadowAddress, true) &&
                IsAddressInMainExecutable(kClockMinuteAddress, false) &&
-               IsAddressInMainExecutable(kClockHourAddress, false);
+               IsAddressInMainExecutable(kClockHourAddress, false) &&
+               IsAddressInMainExecutable(kPlayerInfoAddress, false);
     }
 
     bool ReadGtaClock(unsigned char& hour, unsigned char& minute) {
@@ -265,6 +343,9 @@ namespace {
         AppendLog(header.str());
 
         const ShadowConfig cfg = LoadConfig();
+        g_enablePlayerShadows = cfg.player;
+        g_enablePedestrianShadows = cfg.pedestrians;
+        g_enablePoleShadows = cfg.streetLamps;
         LogConfig(cfg);
         AppendLog(L"Milestone: INI parsing and time-fade curve implemented.");
 
@@ -315,12 +396,25 @@ namespace {
             }
             Sleep(static_cast<DWORD>(cfg.updateIntervalMs));
         }
+        if (g_pedHookInstalled) {
+            MH_DisableHook(reinterpret_cast<void*>(0x00707B40));
+            MH_RemoveHook(reinterpret_cast<void*>(0x00707B40));
+            g_pedHookInstalled = false;
+            g_originalStorePedShadow = nullptr;
+        }
+        if (g_poleHookInstalled) {
+            MH_DisableHook(reinterpret_cast<void*>(0x0070C750));
+            MH_RemoveHook(reinterpret_cast<void*>(0x0070C750));
+            g_poleHookInstalled = false;
+            g_originalStorePoleShadow = nullptr;
+        }
         if (g_shadowHookInstalled) {
             MH_DisableHook(reinterpret_cast<void*>(0x00707390));
-            MH_Uninitialize();
+            MH_RemoveHook(reinterpret_cast<void*>(0x00707390));
             g_shadowHookInstalled = false;
             g_originalStoreShadow = nullptr;
         }
+        MH_Uninitialize();
         return 0;
     }
 }
