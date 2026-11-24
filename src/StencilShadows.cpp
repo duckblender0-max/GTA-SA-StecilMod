@@ -272,43 +272,45 @@ namespace {
             return false;
         }
 
-        const MH_STATUS createStatus = MH_CreateHook(
-            reinterpret_cast<void*>(kStoreShadowAddress),
-            reinterpret_cast<void*>(&HookStoreShadowToBeRendered),
-            reinterpret_cast<void**>(&g_originalStoreShadow));
-        if (createStatus != MH_OK) {
-            std::wstringstream line;
-            line << L"Shadow intensity hook creation failed: " << static_cast<int>(createStatus);
-            AppendLog(line.str());
-            MH_Uninitialize();
-            return false;
+        if (!g_shadowHookInstalled) {
+            const MH_STATUS createStatus = MH_CreateHook(
+                reinterpret_cast<void*>(kStoreShadowAddress),
+                reinterpret_cast<void*>(&HookStoreShadowToBeRendered),
+                reinterpret_cast<void**>(&g_originalStoreShadow));
+            if (createStatus == MH_OK) {
+                const MH_STATUS enableStatus = MH_EnableHook(reinterpret_cast<void*>(kStoreShadowAddress));
+                if (enableStatus == MH_OK) {
+                    g_shadowHookInstalled = true;
+                    AppendLog(L"Installed hook: GTA native CShadows::StoreShadowToBeRendered (0x00707390).");
+                } else {
+                    std::wstringstream line;
+                    line << L"Shadow intensity hook enable failed: " << static_cast<int>(enableStatus);
+                    AppendLog(line.str());
+                    MH_RemoveHook(reinterpret_cast<void*>(kStoreShadowAddress));
+                    g_originalStoreShadow = nullptr;
+                }
+            } else {
+                std::wstringstream line;
+                line << L"Shadow intensity hook creation failed: " << static_cast<int>(createStatus);
+                AppendLog(line.str());
+            }
         }
 
-        const MH_STATUS enableStatus = MH_EnableHook(reinterpret_cast<void*>(kStoreShadowAddress));
-        if (enableStatus != MH_OK) {
-            std::wstringstream line;
-            line << L"Shadow intensity hook enable failed: " << static_cast<int>(enableStatus);
-            AppendLog(line.str());
-            MH_RemoveHook(reinterpret_cast<void*>(kStoreShadowAddress));
-            MH_Uninitialize();
-            g_originalStoreShadow = nullptr;
-            return false;
+        if (!g_pedHookInstalled) {
+            g_pedHookInstalled = CreateAndEnableHook(
+                reinterpret_cast<void*>(0x00707B40),
+                reinterpret_cast<void*>(&HookStorePedObjectShadow),
+                reinterpret_cast<void**>(&g_originalStorePedShadow),
+                L"CShadows::StoreShadowForPedObject (0x00707B40)");
         }
-
-        g_shadowHookInstalled = true;
-        AppendLog(L"Installed hook: GTA native CShadows::StoreShadowToBeRendered (0x00707390).");
-
-        g_pedHookInstalled = CreateAndEnableHook(
-            reinterpret_cast<void*>(0x00707B40),
-            reinterpret_cast<void*>(&HookStorePedObjectShadow),
-            reinterpret_cast<void**>(&g_originalStorePedShadow),
-            L"CShadows::StoreShadowForPedObject (0x00707B40)");
-        g_poleHookInstalled = CreateAndEnableHook(
-            reinterpret_cast<void*>(0x0070C750),
-            reinterpret_cast<void*>(&HookStorePoleShadow),
-            reinterpret_cast<void**>(&g_originalStorePoleShadow),
-            L"CShadows::StoreShadowForPole (0x0070C750)");
-        return true;
+        if (!g_poleHookInstalled) {
+            g_poleHookInstalled = CreateAndEnableHook(
+                reinterpret_cast<void*>(0x0070C750),
+                reinterpret_cast<void*>(&HookStorePoleShadow),
+                reinterpret_cast<void**>(&g_originalStorePoleShadow),
+                L"CShadows::StoreShadowForPole (0x0070C750)");
+        }
+        return g_shadowHookInstalled && g_pedHookInstalled && g_poleHookInstalled;
     }
 
     bool IsAddressInMainExecutable(uintptr_t address, bool requireExecutable) {
@@ -394,13 +396,16 @@ namespace {
 
         int lastLoggedMinute = -1;
         bool clockWarningLogged = false;
-        bool hookAttempted = false;
+        DWORD lastHookAttempt = 0;
         while (InterlockedCompareExchange(&g_running, 1, 1) != 0) {
             unsigned char hour = 0, minute = 0;
             if (ReadGtaClock(hour, minute)) {
                 clockWarningLogged = false;
-                if (!hookAttempted) {
-                    hookAttempted = true;
+                const DWORD tick = GetTickCount();
+                const bool allHooksInstalled = g_shadowHookInstalled &&
+                                               g_pedHookInstalled && g_poleHookInstalled;
+                if (!allHooksInstalled && (lastHookAttempt == 0 || tick - lastHookAttempt >= 5000)) {
+                    lastHookAttempt = tick;
                     InstallShadowIntensityHook();
                 }
                 const float fractionalHour = static_cast<float>(hour) +
