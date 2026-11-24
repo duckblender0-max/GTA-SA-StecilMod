@@ -143,6 +143,15 @@ namespace {
              << L":00; nightStrength=" << cfg.nightStrength;
         AppendLog(fade.str());
 
+        if (cfg.trees)
+            AppendLog(L"NOTICE: Trees=true is reserved; tree shadow generation is not implemented yet.");
+        if (cfg.bridges)
+            AppendLog(L"NOTICE: Bridges=true is reserved; bridge shadow generation is not implemented yet.");
+        if (cfg.maxShadows > 48)
+            AppendLog(L"NOTICE: MaxShadows is a requested setting only; GTA's native shadow arrays remain at 48 entries.");
+        AppendLog(L"NOTICE: MaxShadowDistance is currently a reserved setting and is not enforced by the native hook.");
+        AppendLog(L"NOTICE: StreetLamps controls the game's pole-shadow routine; it does not create new lamp shadows.");
+
         for (const float hour : {0.0f, 6.0f, 9.0f, 12.0f, 18.0f, 21.0f}) {
             std::wstringstream sample;
             sample << L"Fade sample at " << hour << L":00 = "
