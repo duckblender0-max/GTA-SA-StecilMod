@@ -197,6 +197,7 @@ namespace {
         constexpr uintptr_t kPlayersAddress = 0x00B7CD98;
         constexpr uintptr_t kPlayerInfoStride = 0x190;
         bool isPlayer = false;
+        bool playerIdentityKnown = false;
         MEMORY_BASIC_INFORMATION focusInfo{};
         if (VirtualQuery(reinterpret_cast<const void*>(kPlayerInFocusAddress),
                          &focusInfo, sizeof(focusInfo)) == sizeof(focusInfo) &&
@@ -214,12 +215,19 @@ namespace {
                     playerInfo.AllocationBase == reinterpret_cast<void*>(GetModuleHandleW(nullptr)) &&
                     (playerInfo.Protect & (PAGE_NOACCESS | PAGE_GUARD)) == 0) {
                     void* playerPed = *reinterpret_cast<void* volatile const*>(playerPedAddress);
-                    isPlayer = (playerPed == ped);
+                    if (playerPed) {
+                        isPlayer = (playerPed == ped);
+                        playerIdentityKnown = true;
+                    }
                 }
             }
         }
 
-        if ((isPlayer && !g_enablePlayerShadows) || (!isPlayer && !g_enablePedestrianShadows))
+        // If player identity cannot be read, do not accidentally treat CJ as
+        // an ordinary pedestrian when the two target switches differ.
+        if (!playerIdentityKnown && g_enablePlayerShadows != g_enablePedestrianShadows)
+            return;
+        if ((isPlayer && !g_enablePlayerShadows) || (playerIdentityKnown && !isPlayer && !g_enablePedestrianShadows))
             return;
 
         g_originalStorePedShadow(ped, displacementX, displacementY, frontX, frontY, sideX, sideY);
