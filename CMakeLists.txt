@@ -4,7 +4,7 @@ project(StencilShadows LANGUAGES C CXX)
 include(FetchContent)
 FetchContent_Declare(minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG v1.3.3
+    GIT_TAG 8af6b4acae5a9388fd742b56fa79ece89d96f823
     GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(minhook)
