@@ -34,6 +34,7 @@ namespace {
         int maxShadows = 128;
         bool trees = true, streetLamps = true, bridges = true;
         bool player = true, pedestrians = true, dynamicFade = true;
+        bool hookShadowIntensity = false, hookPedestrians = false, hookPole = false;
         float dayStartHour = 6.0f, fullStrengthHour = 12.0f;
         float fadeOutStartHour = 18.0f, nightStrength = 0.12f;
         int updateIntervalMs = 100;
@@ -85,6 +86,9 @@ namespace {
         cfg.bridges = ReadInt(file, L"ShadowTargets", L"Bridges", 1) != 0;
         cfg.player = ReadInt(file, L"ShadowTargets", L"Player", 1) != 0;
         cfg.pedestrians = ReadInt(file, L"ShadowTargets", L"Pedestrians", 1) != 0;
+        cfg.hookShadowIntensity = ReadInt(file, L"ExperimentalHooks", L"ShadowIntensity", 0) != 0;
+        cfg.hookPedestrians = ReadInt(file, L"ExperimentalHooks", L"PedestrianHook", 0) != 0;
+        cfg.hookPole = ReadInt(file, L"ExperimentalHooks", L"PoleHook", 0) != 0;
 
         cfg.dynamicFade = ReadInt(file, L"DynamicFade", L"Enabled", 1) != 0;
         cfg.dayStartHour = std::clamp(ReadFloat(file, L"DynamicFade", L"DayStartHour", 6.0f), 0.0f, 23.99f);
@@ -151,6 +155,7 @@ namespace {
             AppendLog(L"NOTICE: MaxShadows is a requested setting only; GTA's native shadow arrays remain at 48 entries.");
         AppendLog(L"NOTICE: MaxShadowDistance is currently a reserved setting and is not enforced by the native hook.");
         AppendLog(L"NOTICE: StreetLamps controls the game's pole-shadow routine; it does not create new lamp shadows.");
+        AppendLog(std::wstring(L"Experimental hooks: intensity=") + (cfg.hookShadowIntensity ? L"on" : L"off") + L", pedestrian=" + (cfg.hookPedestrians ? L"on" : L"off") + L", pole=" + (cfg.hookPole ? L"on" : L"off"));
 
         for (const float hour : {0.0f, 6.0f, 9.0f, 12.0f, 18.0f, 21.0f}) {
             std::wstringstream sample;
@@ -262,7 +267,7 @@ namespace {
         return true;
     }
 
-    bool InstallShadowIntensityHook() {
+    bool InstallShadowIntensityHook(const ShadowConfig& cfg) {
         constexpr uintptr_t kStoreShadowAddress = 0x00707390; // CShadows::StoreShadowToBeRendered, SA 1.0 US
         const MH_STATUS initStatus = MH_Initialize();
         if (initStatus != MH_OK && initStatus != MH_ERROR_ALREADY_INITIALIZED) {
@@ -272,7 +277,7 @@ namespace {
             return false;
         }
 
-        if (!g_shadowHookInstalled) {
+        if (cfg.hookShadowIntensity && !g_shadowHookInstalled) {
             const MH_STATUS createStatus = MH_CreateHook(
                 reinterpret_cast<void*>(kStoreShadowAddress),
                 reinterpret_cast<void*>(&HookStoreShadowToBeRendered),
@@ -296,21 +301,23 @@ namespace {
             }
         }
 
-        if (!g_pedHookInstalled) {
+        if (cfg.hookPedestrians && !g_pedHookInstalled) {
             g_pedHookInstalled = CreateAndEnableHook(
                 reinterpret_cast<void*>(0x00707B40),
                 reinterpret_cast<void*>(&HookStorePedObjectShadow),
                 reinterpret_cast<void**>(&g_originalStorePedShadow),
                 L"CShadows::StoreShadowForPedObject (0x00707B40)");
         }
-        if (!g_poleHookInstalled) {
+        if (cfg.hookPole && !g_poleHookInstalled) {
             g_poleHookInstalled = CreateAndEnableHook(
                 reinterpret_cast<void*>(0x0070C750),
                 reinterpret_cast<void*>(&HookStorePoleShadow),
                 reinterpret_cast<void**>(&g_originalStorePoleShadow),
                 L"CShadows::StoreShadowForPole (0x0070C750)");
         }
-        return g_shadowHookInstalled && g_pedHookInstalled && g_poleHookInstalled;
+        return (!cfg.hookShadowIntensity || g_shadowHookInstalled) &&
+               (!cfg.hookPedestrians || g_pedHookInstalled) &&
+               (!cfg.hookPole || g_poleHookInstalled);
     }
 
     bool IsAddressInMainExecutable(uintptr_t address, bool requireExecutable) {
@@ -382,6 +389,8 @@ namespace {
         g_enablePoleShadows = cfg.streetLamps;
         LogConfig(cfg);
         AppendLog(L"Milestone: INI parsing and time-fade curve implemented.");
+        if (!cfg.hookShadowIntensity && !cfg.hookPedestrians && !cfg.hookPole)
+            AppendLog(L"SAFE MODE: all experimental hooks are disabled; only clock polling and fade calculation are active.");
 
         if (!IsSupportedExecutableLayout()) {
             AppendLog(L"ERROR: Main executable layout is not GTA SA 1.0 US at the expected image base; hooks were not installed.");
@@ -402,11 +411,13 @@ namespace {
             if (ReadGtaClock(hour, minute)) {
                 clockWarningLogged = false;
                 const DWORD tick = GetTickCount();
-                const bool allHooksInstalled = g_shadowHookInstalled &&
-                                               g_pedHookInstalled && g_poleHookInstalled;
-                if (!allHooksInstalled && (lastHookAttempt == 0 || tick - lastHookAttempt >= 5000)) {
+                const bool requestedHooksReady =
+                    (!cfg.hookShadowIntensity || g_shadowHookInstalled) &&
+                    (!cfg.hookPedestrians || g_pedHookInstalled) &&
+                    (!cfg.hookPole || g_poleHookInstalled);
+                if (!requestedHooksReady && (lastHookAttempt == 0 || tick - lastHookAttempt >= 5000)) {
                     lastHookAttempt = tick;
-                    InstallShadowIntensityHook();
+                    InstallShadowIntensityHook(cfg);
                 }
                 const float fractionalHour = static_cast<float>(hour) +
                                              static_cast<float>(minute) / 60.0f;
