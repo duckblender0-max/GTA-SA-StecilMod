@@ -7,12 +7,15 @@
 #include <cwchar>
 #include <fstream>
 #include <iomanip>
+#include <cstring>
 #include <initializer_list>
 #include <sstream>
 #include <string>
 
 namespace {
     HMODULE g_module = nullptr;
+    volatile LONG g_running = 1;
+    volatile LONG g_strengthBits = 0;
 
     struct ShadowConfig {
         bool enabled = true;
@@ -137,6 +140,28 @@ namespace {
         }
     }
 
+    bool ReadGtaClock(unsigned char& hour, unsigned char& minute) {
+        // Plugin-SDK CClock addresses for GTA San Andreas 1.0 US:
+        // ms_nGameClockMinutes = 0xB70152, ms_nGameClockHours = 0xB70153.
+        constexpr uintptr_t kClockMinuteAddress = 0x00B70152;
+        constexpr uintptr_t kClockHourAddress = 0x00B70153;
+
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<const void*>(kClockHourAddress),
+                         &info, sizeof(info)) != sizeof(info)) return false;
+        if (info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+            return false;
+
+        const auto* minutePtr = reinterpret_cast<volatile const unsigned char*>(kClockMinuteAddress);
+        const auto* hourPtr = reinterpret_cast<volatile const unsigned char*>(kClockHourAddress);
+        const unsigned char h = *hourPtr;
+        const unsigned char m = *minutePtr;
+        if (h > 23 || m > 59) return false;
+        hour = h;
+        minute = m;
+        return true;
+    }
+
     DWORD WINAPI Initialize(LPVOID) {
         SYSTEMTIME now{};
         GetLocalTime(&now);
@@ -150,7 +175,43 @@ namespace {
         const ShadowConfig cfg = LoadConfig();
         LogConfig(cfg);
         AppendLog(L"Milestone: INI parsing and time-fade curve implemented.");
-        AppendLog(L"Pending: GTA clock binding, entity discovery, D3D9/RenderWare shadow rendering.");
+
+        if (!cfg.enabled) {
+            AppendLog(L"Plugin disabled in INI; live clock polling skipped.");
+            return 0;
+        }
+
+        int lastLoggedMinute = -1;
+        bool clockWarningLogged = false;
+        while (InterlockedCompareExchange(&g_running, 1, 1) != 0) {
+            unsigned char hour = 0, minute = 0;
+            if (ReadGtaClock(hour, minute)) {
+                clockWarningLogged = false;
+                const float fractionalHour = static_cast<float>(hour) +
+                                             static_cast<float>(minute) / 60.0f;
+                const float strength = CalculateTimeStrength(cfg, fractionalHour);
+                LONG bits = 0;
+                static_assert(sizeof(bits) == sizeof(strength), "32-bit float expected");
+                std::memcpy(&bits, &strength, sizeof(bits));
+                InterlockedExchange(&g_strengthBits, bits);
+
+                const int totalMinutes = static_cast<int>(hour) * 60 + minute;
+                if (totalMinutes != lastLoggedMinute) {
+                    std::wstringstream line;
+                    line << L"GTA clock " << std::setfill(L'0')
+                         << std::setw(2) << static_cast<int>(hour) << L":"
+                         << std::setw(2) << static_cast<int>(minute)
+                         << L" | shadow strength=" << std::fixed
+                         << std::setprecision(3) << strength;
+                    AppendLog(line.str());
+                    lastLoggedMinute = totalMinutes;
+                }
+            } else if (!clockWarningLogged) {
+                AppendLog(L"WARNING: GTA 1.0 US clock address is not readable yet; retrying.");
+                clockWarningLogged = true;
+            }
+            Sleep(static_cast<DWORD>(cfg.updateIntervalMs));
+        }
         return 0;
     }
 }
@@ -158,9 +219,12 @@ namespace {
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         g_module = module;
+        InterlockedExchange(&g_running, 1);
         DisableThreadLibraryCalls(module);
         HANDLE thread = CreateThread(nullptr, 0, Initialize, nullptr, 0, nullptr);
         if (thread) CloseHandle(thread);
+    } else if (reason == DLL_PROCESS_DETACH) {
+        InterlockedExchange(&g_running, 0);
     }
     return TRUE;
 }
