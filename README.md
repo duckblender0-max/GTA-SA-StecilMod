@@ -32,9 +32,10 @@ Implemented in the current source:
 - Logs loaded settings and fade-curve diagnostic samples.
 
 Still pending:
-- Connecting the fade calculation to GTA's in-game clock.
 - Finding and classifying trees, lamps, bridges, the player, and pedestrians.
 - Creating and drawing stencil shadows through RenderWare/Direct3D 9.
 - Loading and binding the `.fx` shader.
 
-This is a real code milestone, but it is **not yet a functioning shadow renderer**. Do not install it expecting visible shadows.
+The source now polls the documented GTA SA 1.0 US CClock memory fields (hour at `0xB70153`, minute at `0xB70152`) and calculates the configured fade strength from the live in-game clock. It logs a line when the in-game minute changes. The value is prepared for a future render hook, but it is not yet applied to visible shadows.
+
+This is a real integration milestone, but it is **not yet a functioning shadow renderer**. Do not install it expecting visible shadows.
