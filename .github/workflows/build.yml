@@ -1,0 +1,26 @@
+name: Build StencilShadows ASI
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure x86 build
+        run: cmake -S . -B build -A Win32 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile
+        run: cmake --build build --config Release
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: StencilShadows-x86-package
+          path: build/package/
+          if-no-files-found: error
