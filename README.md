@@ -27,11 +27,11 @@ The artifact is intended to contain:
 ## Implementation status
 
 Implemented in the current source:
-- Reads and validates INI settings, including a hard cap of 128 shadow slots.
+- Reads INI settings and clamps the requested `MaxShadows` value to 1–128; this does not resize GTA's native shadow arrays.
 - Calculates a smooth time-of-day fade curve: faint before 06:00, full at 12:00, fades after 18:00, and reaches the configured night strength by midnight.
 - Installs hooks for GTA's native shadow submission, pedestrian-object shadow routine, and pole-shadow routine.
 - Applies the time-of-day intensity multiplier to native shadow submissions.
-- Implements the INI switches for player shadows, pedestrian shadows, and pole shadows (the pole switch gates GTA's native pole-shadow routine).
+- Implements the INI switches for player shadows, pedestrian shadows, and pole shadows (the pole switch gates GTA's native pole-shadow routine). Player identification follows `CWorld::PlayerInFocus`; if identity cannot be resolved while player/pedestrian switches differ, the hook fails closed for that call.
 
 Still pending:
 - Tree and bridge shadow generation; those INI switches are currently reserved and do not create new shadows.
