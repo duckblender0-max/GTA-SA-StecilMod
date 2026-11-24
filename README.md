@@ -29,9 +29,9 @@ The artifact is intended to contain:
 Implemented in the current source:
 - Reads INI settings and clamps the requested `MaxShadows` value to 1–128; this does not resize GTA's native shadow arrays.
 - Calculates a smooth time-of-day fade curve: faint before 06:00, full at 12:00, fades after 18:00, and reaches the configured night strength by midnight.
-- Installs hooks for GTA's native shadow submission, pedestrian-object shadow routine, and pole-shadow routine.
-- Applies the time-of-day intensity multiplier to native shadow submissions.
-- Implements the INI switches for player shadows, pedestrian shadows, and pole shadows (the pole switch gates GTA's native pole-shadow routine). Player identification follows `CWorld::PlayerInFocus`; if identity cannot be resolved while player/pedestrian switches differ, the hook fails closed for that call.
+- Provides three experimental hooks controlled independently in `[ExperimentalHooks]`; all are OFF by default after the reported in-game crash.
+- When explicitly enabled, the intensity hook scales native shadow submissions; the pedestrian hook gates player/pedestrian shadow submissions; the pole hook gates GTA's existing pole-shadow routine.
+- The player/pedestrian identity check uses `CWorld::PlayerInFocus`; if identity cannot be resolved while the target switches differ, the hook fails closed for that call.
 
 Still pending:
 - Tree and bridge shadow generation; those INI switches are currently reserved and do not create new shadows.
@@ -39,5 +39,7 @@ Still pending:
 - Loading and binding the `.fx` shader.
 
 The source now polls the documented GTA SA 1.0 US CClock memory fields (hour at `0xB70153`, minute at `0xB70152`) and calculates fade strength from the live in-game clock. It also uses MinHook to intercept GTA's native `CShadows::StoreShadowToBeRendered` function at `0x00707390`, scaling the intensity of shadows that the game already submits. This is a first integration with the game's existing shadow pipeline; it does not yet generate new tree/bridge/lamp shadows.
+
+For cautious testing, enable only one `[ExperimentalHooks]` option at a time, then launch the game and inspect `StencilShadows.log`. Leave the other two at `0`. The default package disables all three hooks; it only checks the GTA clock and calculates the fade strength.
 
 Important limitations: `MaxShadows=128` is currently a configuration target only; GTA SA's native shadow storage is fixed-size and has not been expanded. The hooks currently adjust or gate GTA routines that already exist; they do not synthesize new shadow geometry. The pole hook controls GTA's existing pole-shadow routine, not arbitrary new lamp shadows. This is not yet a complete custom stencil-shadow mod, and the ASI still needs in-game testing before it should be treated as safe to install.
