@@ -33,9 +33,9 @@ Implemented in the current source:
 
 Still pending:
 - Finding and classifying trees, lamps, bridges, the player, and pedestrians.
-- Creating and drawing stencil shadows through RenderWare/Direct3D 9.
+- Generating new real-time shadows for trees, lamp posts, bridges, and other static geometry.
 - Loading and binding the `.fx` shader.
 
-The source now polls the documented GTA SA 1.0 US CClock memory fields (hour at `0xB70153`, minute at `0xB70152`) and calculates the configured fade strength from the live in-game clock. It logs a line when the in-game minute changes. The value is prepared for a future render hook, but it is not yet applied to visible shadows.
+The source now polls the documented GTA SA 1.0 US CClock memory fields (hour at `0xB70153`, minute at `0xB70152`) and calculates fade strength from the live in-game clock. It also uses MinHook to intercept GTA's native `CShadows::StoreShadowToBeRendered` function at `0x00707390`, scaling the intensity of shadows that the game already submits. This is a first integration with the game's existing shadow pipeline; it does not yet generate new tree/bridge/lamp shadows.
 
 This is a real integration milestone, but it is **not yet a functioning shadow renderer**. Do not install it expecting visible shadows.
