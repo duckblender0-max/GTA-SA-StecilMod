@@ -7,6 +7,7 @@
 #include <cwchar>
 #include <fstream>
 #include <iomanip>
+#include <initializer_list>
 #include <sstream>
 #include <string>
 
@@ -51,7 +52,7 @@ namespace {
         wchar_t buffer[64]{}, fallbackText[64]{};
         swprintf_s(fallbackText, L"%.4f", fallback);
         GetPrivateProfileStringW(section, key, fallbackText, buffer,
-                                 static_cast<DWORD>(std::size(buffer)), file.c_str());
+                                 static_cast<DWORD>(_countof(buffer)), file.c_str());
         wchar_t* end = nullptr;
         const double value = wcstod(buffer, &end);
         if (end == buffer || !std::isfinite(value)) return fallback;
