@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <cstring>
+#include <cstdint>
 #include <initializer_list>
 #include <sstream>
 #include <string>
@@ -208,16 +209,39 @@ namespace {
         return true;
     }
 
-    bool ReadGtaClock(unsigned char& hour, unsigned char& minute) {
-        // Plugin-SDK CClock addresses for GTA San Andreas 1.0 US:
-        // ms_nGameClockMinutes = 0xB70152, ms_nGameClockHours = 0xB70153.
+    bool IsAddressInMainExecutable(uintptr_t address, bool requireExecutable) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<const void*>(address), &info, sizeof(info)) != sizeof(info))
+            return false;
+
+        const HMODULE mainModule = GetModuleHandleW(nullptr);
+        if (info.State != MEM_COMMIT || info.Type != MEM_IMAGE ||
+            info.AllocationBase != reinterpret_cast<void*>(mainModule) ||
+            (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0)
+            return false;
+
+        if (!requireExecutable) return true;
+        const DWORD protection = info.Protect & 0xFF;
+        return protection == PAGE_EXECUTE || protection == PAGE_EXECUTE_READ ||
+               protection == PAGE_EXECUTE_READWRITE || protection == PAGE_EXECUTE_WRITECOPY;
+    }
+
+    bool IsSupportedExecutableLayout() {
+        constexpr uintptr_t kStoreShadowAddress = 0x00707390;
         constexpr uintptr_t kClockMinuteAddress = 0x00B70152;
         constexpr uintptr_t kClockHourAddress = 0x00B70153;
+        const HMODULE mainModule = GetModuleHandleW(nullptr);
+        if (reinterpret_cast<uintptr_t>(mainModule) != 0x00400000) return false;
+        return IsAddressInMainExecutable(kStoreShadowAddress, true) &&
+               IsAddressInMainExecutable(kClockMinuteAddress, false) &&
+               IsAddressInMainExecutable(kClockHourAddress, false);
+    }
 
-        MEMORY_BASIC_INFORMATION info{};
-        if (VirtualQuery(reinterpret_cast<const void*>(kClockHourAddress),
-                         &info, sizeof(info)) != sizeof(info)) return false;
-        if (info.State != MEM_COMMIT || (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+    bool ReadGtaClock(unsigned char& hour, unsigned char& minute) {
+        constexpr uintptr_t kClockMinuteAddress = 0x00B70152;
+        constexpr uintptr_t kClockHourAddress = 0x00B70153;
+        if (!IsAddressInMainExecutable(kClockMinuteAddress, false) ||
+            !IsAddressInMainExecutable(kClockHourAddress, false))
             return false;
 
         const auto* minutePtr = reinterpret_cast<volatile const unsigned char*>(kClockMinuteAddress);
@@ -243,6 +267,12 @@ namespace {
         const ShadowConfig cfg = LoadConfig();
         LogConfig(cfg);
         AppendLog(L"Milestone: INI parsing and time-fade curve implemented.");
+
+        if (!IsSupportedExecutableLayout()) {
+            AppendLog(L"ERROR: Main executable layout is not GTA SA 1.0 US at the expected image base; hooks were not installed.");
+            return 0;
+        }
+        AppendLog(L"Compatibility check passed: GTA SA 1.0 US image layout and hook/clock regions verified.");
 
         if (!cfg.enabled) {
             AppendLog(L"Plugin disabled in INI; live clock polling skipped.");
