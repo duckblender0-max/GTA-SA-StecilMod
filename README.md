@@ -24,6 +24,17 @@ The artifact is intended to contain:
 - `StencilShadows.fx`
 - `StencilShadows.log`
 
-## Important status
+## Implementation status
 
-This first milestone is only an **ASI bootstrap and build pipeline**. The ASI writes a diagnostic log when loaded. It does **not yet hook GTA San Andreas, enumerate world entities, render stencil shadows, or load/bind the shader**. The time-fade values are configuration only until the renderer is implemented. Do not install this as a working shadow mod yet.
+Implemented in the current source:
+- Reads and validates INI settings, including a hard cap of 128 shadow slots.
+- Calculates a smooth time-of-day fade curve: faint before 06:00, full at 12:00, fades after 18:00, and reaches the configured night strength by midnight.
+- Logs loaded settings and fade-curve diagnostic samples.
+
+Still pending:
+- Connecting the fade calculation to GTA's in-game clock.
+- Finding and classifying trees, lamps, bridges, the player, and pedestrians.
+- Creating and drawing stencil shadows through RenderWare/Direct3D 9.
+- Loading and binding the `.fx` shader.
+
+This is a real code milestone, but it is **not yet a functioning shadow renderer**. Do not install it expecting visible shadows.
