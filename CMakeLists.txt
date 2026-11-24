@@ -14,6 +14,7 @@ add_library(StencilShadows SHARED
 )
 
 target_compile_features(StencilShadows PRIVATE cxx_std_17)
+target_include_directories(StencilShadows PRIVATE "${minhook_SOURCE_DIR}/include")
 target_compile_definitions(StencilShadows PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_link_libraries(StencilShadows PRIVATE kernel32 user32 minhook)
 
