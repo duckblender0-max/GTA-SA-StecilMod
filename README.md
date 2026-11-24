@@ -29,13 +29,15 @@ The artifact is intended to contain:
 Implemented in the current source:
 - Reads and validates INI settings, including a hard cap of 128 shadow slots.
 - Calculates a smooth time-of-day fade curve: faint before 06:00, full at 12:00, fades after 18:00, and reaches the configured night strength by midnight.
-- Logs loaded settings and fade-curve diagnostic samples.
+- Installs hooks for GTA's native shadow submission, pedestrian-object shadow routine, and pole-shadow routine.
+- Applies the time-of-day intensity multiplier to native shadow submissions.
+- Implements the INI switches for player shadows, pedestrian shadows, and pole shadows (the pole switch gates GTA's native pole-shadow routine).
 
 Still pending:
-- Finding and classifying trees, lamps, bridges, the player, and pedestrians.
-- Generating new real-time shadows for trees, lamp posts, bridges, and other static geometry.
+- Tree and bridge shadow generation; those INI switches are currently reserved and do not create new shadows.
+- Expanding native shadow storage beyond GTA's default fixed capacity; 128 remains a configuration ceiling, not an allocated capacity.
 - Loading and binding the `.fx` shader.
 
 The source now polls the documented GTA SA 1.0 US CClock memory fields (hour at `0xB70153`, minute at `0xB70152`) and calculates fade strength from the live in-game clock. It also uses MinHook to intercept GTA's native `CShadows::StoreShadowToBeRendered` function at `0x00707390`, scaling the intensity of shadows that the game already submits. This is a first integration with the game's existing shadow pipeline; it does not yet generate new tree/bridge/lamp shadows.
 
-Important limitations: `MaxShadows=128` is currently a configuration target only; GTA SA's native shadow storage is fixed-size and has not been expanded. The hook only scales the intensity of shadows the game already submits. It does not yet create new shadows for trees, lamp posts, or bridges. This is not yet a complete custom stencil-shadow mod, and the ASI still needs in-game testing before it should be treated as safe to install.
+Important limitations: `MaxShadows=128` is currently a configuration target only; GTA SA's native shadow storage is fixed-size and has not been expanded. The hooks currently adjust or gate GTA routines that already exist; they do not synthesize new shadow geometry. The pole hook controls GTA's existing pole-shadow routine, not arbitrary new lamp shadows. This is not yet a complete custom stencil-shadow mod, and the ASI still needs in-game testing before it should be treated as safe to install.
